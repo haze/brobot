@@ -350,14 +350,15 @@ fn youtube_dl_process_audio(track: ThreadSafeTrackStatus, queue_sender: QueueWor
     let file_path = music_dir.join(&source.id());
     match std::fs::File::create(&file_path) {
       Ok(new_file) => {
-        log::info!("temp file made at: {:?}", &file_path);
+        log::info!("Audio file made at: {:?}", &file_path);
         track.set_state(TrackState::Downloading(source.clone()));
-        log::info!("Now doanloading");
+        log::info!("Beginning download");
         let mut download_command = Command::new("youtube-dl");
         let ytdl_args = &[
           "-f",
           "bestaudio",
           "--no-continue",
+          "--rm-cache-dir",
           &*url,
           "-o",
           file_path
