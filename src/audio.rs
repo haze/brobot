@@ -83,6 +83,12 @@ impl ThreadSafeTrackStatus {
     }
   }
 
+  fn fail_str(&self, error: String) {
+    if let Some(source) = self.get_source() {
+      self.set_state(TrackState::SimpleFailed { source, error })
+    }
+  }
+
   // (Source, Url)
   fn get_info(&self) -> Option<(TrackSource, String)> {
     self
@@ -372,11 +378,11 @@ fn youtube_dl_process_audio(track: ThreadSafeTrackStatus, queue_sender: QueueWor
                 log::error!("Failed to send SongFinishedDownloading event: {}", &why);
               }
             } else {
-              log::error!(
-                "{}",
-                String::from_utf8(output.stdout).expect("this should not happen")
-              );
-              log::error!("Output status != success");
+              if let Ok(utf8_stdout) = String::from_utf8(output.stdout) {
+                track.fail_str(format!("Download command failed: {}", &utf8_stdout));
+              } else {
+                log::error!("Command output was not UTF8, but the download was a failure :(");
+              }
             }
           }
           Err(err) => {
@@ -689,12 +695,17 @@ enum TrackState {
     source: TrackSource,
     error: Box<dyn std::error::Error + Send + Sync>,
   },
+  SimpleFailed {
+    source: TrackSource,
+    error: String,
+  },
 }
 
 impl fmt::Display for TrackState {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       TrackState::Failed { source, error } => write!(f, "**Failed** {}, {}", source, error),
+      TrackState::SimpleFailed { source, error } => write!(f, "**Failed** {}, {}", source, error),
       TrackState::Ready { source, .. } => write!(f, "{}", source),
       TrackState::Queueed(source) => write!(f, "**Queued & Processing** {}", source),
       TrackState::Downloading(source) => write!(f, "**Downloading** {}", source),
@@ -709,6 +720,7 @@ impl TrackState {
       TrackState::Downloading(s) => s,
       TrackState::Ready { source, .. } => source,
       TrackState::Failed { source, .. } => source,
+      TrackState::SimpleFailed { source, .. } => source,
     }
     .clone()
   }
