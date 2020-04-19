@@ -153,6 +153,7 @@ pub struct Queue {
   cache: CacheRwLock,
   http: Arc<Http>,
   paused: bool,
+  pub volume: f32,
 }
 
 struct LastQueueMessage {
@@ -238,6 +239,7 @@ impl Queue {
     bot_id: UserId,
     cache: CacheRwLock,
     http: Arc<Http>,
+    volume: Option<f32>,
   ) -> Arc<RwLock<Queue>> {
     let (worker_sender, receiver) = channel::unbounded();
     let queue = Arc::new(RwLock::new(Queue {
@@ -251,6 +253,7 @@ impl Queue {
       cache,
       http,
       bot_id,
+      volume: volume.unwrap_or_else(|| 1_f32),
     }));
     let queue_clone = Arc::clone(&queue);
     runtime
@@ -266,11 +269,30 @@ impl TypeMapKey for ThreadPoolKey {
   type Value = Arc<Mutex<ThreadPool>>;
 }
 
-pub struct QueueKey;
-
 type ThreadSafeQueue = Arc<RwLock<Queue>>;
 type ThreadSafeGuildIdMap<T> = Arc<RwLock<HashMap<GuildId, T>>>;
 
+pub struct YouTubeApiKey;
+impl TypeMapKey for YouTubeApiKey {
+  type Value = Arc<String>;
+}
+
+pub struct SoundCloudApiKey;
+impl TypeMapKey for SoundCloudApiKey {
+  type Value = Arc<String>;
+}
+
+pub struct SearchClientKey;
+impl TypeMapKey for SearchClientKey {
+  type Value = Arc<reqwest::blocking::Client>;
+}
+
+pub struct VolumeMapKey;
+impl TypeMapKey for VolumeMapKey {
+  type Value = Arc<HashMap<u64, f32>>;
+}
+
+pub struct QueueKey;
 impl TypeMapKey for QueueKey {
   type Value = ThreadSafeGuildIdMap<ThreadSafeQueue>;
 }
@@ -358,6 +380,10 @@ fn youtube_dl_process_audio(track: ThreadSafeTrackStatus, queue_sender: QueueWor
                 log::error!("Failed to send SongFinishedDownloading event: {}", &why);
               }
             } else {
+              log::error!(
+                "{}",
+                String::from_utf8(output.stdout).expect("this should not happen")
+              );
               log::error!("Output status != success");
             }
           }
@@ -413,6 +439,13 @@ impl std::fmt::Display for Queue {
 }
 
 impl Queue {
+  fn set_volume(&mut self, new_volume: f32) {
+    self.volume = new_volume;
+    if let Some(ref now_playing) = self.currently_playing {
+      now_playing.audio.lock().volume(self.volume);
+    }
+  }
+
   fn can_pop(&mut self) -> bool {
     if let Some(state) = self.tracks.first() {
       if let Ok(guard) = state.state.read() {
@@ -424,9 +457,7 @@ impl Queue {
     false
   }
 
-  fn add_track(&mut self, url: &str) -> CommandResult {
-    log::info!("Parsing {:?}", url);
-    let url = url::Url::parse(url)?;
+  fn add_track(&mut self, url: url::Url) -> CommandResult {
     let host_str = url.host_str();
     match host_str {
       Some(host) => {
@@ -512,6 +543,7 @@ impl Queue {
           match voice::ffmpeg(path) {
             Ok(audio_source) => {
               let audio = current_channel.handler.lock().play_only(audio_source);
+              audio.lock().volume(self.volume);
               self.currently_playing =
                 Some(NowPlaying::new(source, audio, self.worker_sender.clone()));
             }
@@ -577,7 +609,23 @@ impl TrackSource {
   fn id(&self) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    self.url().hash(&mut hasher);
+    match self {
+      TrackSource::SoundCloud {
+        embed_info: Some(EmbedInfo {
+          thumbnail_url: Some(url),
+          ..
+        }),
+        ..
+      }
+      | TrackSource::YouTube {
+        embed_info: Some(EmbedInfo {
+          thumbnail_url: Some(url),
+          ..
+        }),
+        ..
+      } => url.hash(&mut hasher),
+      _ => self.url().hash(&mut hasher),
+    }
     format!("{:X}", hasher.finish())
   }
 }
@@ -604,7 +652,11 @@ impl std::fmt::Display for TrackSource {
 impl TrackSource {
   fn from_url(url: url::Url) -> TrackSource {
     match url.host_str() {
-      Some("youtube") | Some("youtu.be") | Some("www.youtube.com") | Some("www.youtu.be") => {
+      Some("youtube")
+      | Some("youtu.be")
+      | Some("youtube.com")
+      | Some("www.youtube.com")
+      | Some("www.youtu.be") => {
         let embed_info: Option<EmbedInfo> =
           reqwest::blocking::get(&*format!("https://noembed.com/embed?url={}", url))
             .ok()
@@ -675,8 +727,217 @@ impl TrackState {
 }
 
 #[group]
-#[commands(enqueue, list_queue, join, leave, skip, start, stop)]
+#[commands(
+  enqueue,
+  list_queue,
+  join,
+  leave,
+  skip,
+  start,
+  stop,
+  search,
+  volume,
+  wipe_audio_cache
+)]
 struct Audio;
+
+#[command]
+fn wipe_audio_cache(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
+  let (total_bytes, items) = std::fs::read_dir("saved_tracks/")
+    .map_err(|e| CommandError(format!("Failed to read track cache: {}", e)))?
+    .fold((0, 0), |(mut bytes, mut items), entry| {
+      match entry {
+        Ok(file) => {
+          match file.metadata() {
+            Ok(meta) => bytes += meta.len(),
+            Err(why) => log::error!("Failed to read specific cached track metadata: {}", &why),
+          };
+          items += 1;
+        }
+        Err(why) => log::error!("Failed to read specific cached track: {}", &why),
+      };
+      (bytes, items)
+    });
+  match args.current() {
+    Some("--dry") => {} // dry run
+    _ => {
+      std::fs::remove_dir("saved_tracks/")
+        .map_err(|e| CommandError(format!("Failed to remove cached track dir: {}", e)))?;
+      std::fs::create_dir_all("saved_tracks/")
+        .map_err(|e| CommandError(format!("Failed to create cached track dir: {}", e)))?;
+    }
+  }
+  match msg.channel(&ctx) {
+    Some(Channel::Guild(guild_chan)) => {
+      send_message(
+        ctx,
+        &guild_chan.read(),
+        MessageParams {
+          message: Some(format!(
+            "Wiped **{}** files, totaling **{}**",
+            items,
+            pretty_bytes::converter::convert(total_bytes as f64)
+          )),
+          ..MessageParams::default()
+        },
+      )
+      .map_err(|e| CommandError(format!("Failed to send message: {:?}", e)))?;
+    }
+    _ => {
+      if let Err(why) = msg.reply(ctx, "Can only be used in Guild channels") {
+        log::error!("Failed to send error message: {}", &why);
+      }
+    }
+  };
+  Ok(())
+}
+
+#[command]
+#[aliases("vol", "v")]
+fn volume(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
+  let guild = msg
+    .guild(&ctx.cache)
+    .ok_or_else(|| CommandError(String::from("Only Guilds supported")))?;
+  let guild = guild.read();
+  let guild_id = guild.id;
+  drop(guild);
+  let queue_lock = get_queue_for_guild(ctx, guild_id)?;
+  let queue_read = queue_lock
+    .read()
+    .map_err(|e| CommandError(format!("Could not acquire queue read lock: {}", e)))?;
+  let current_volume = queue_read.volume;
+  drop(queue_read);
+  let mut queue_write = queue_lock
+    .write()
+    .map_err(|e| CommandError(format!("Could not acquire queue write lock: {}", e)))?;
+  let response = match args.parse::<f32>() {
+    Ok(new_volume) => {
+      queue_write.set_volume(new_volume / 100_f32);
+      format!(
+        "Volume changed from **{}** to **{}**",
+        &current_volume * 100_f32,
+        &new_volume,
+      )
+    }
+    Err(_) => format!("Volume is currently **{}**", &current_volume * 100_f32),
+  };
+  match msg.channel(&ctx) {
+    Some(Channel::Guild(guild_chan)) => {
+      send_message(
+        ctx,
+        &guild_chan.read(),
+        MessageParams {
+          message: Some(response),
+          ..MessageParams::default()
+        },
+      )
+      .map_err(|e| CommandError(format!("Failed to send message: {:?}", e)))?;
+    }
+    _ => {
+      if let Err(why) = msg.reply(ctx, "Can only be used in Guild channels") {
+        log::error!("Failed to send error message: {}", &why);
+      }
+    }
+  };
+  Ok(())
+}
+
+#[command]
+#[aliases("s")]
+fn search(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+  use crate::search;
+  match msg.channel(&ctx) {
+    // send help
+    Some(chan) => match chan {
+      Channel::Guild(guild_chan) => {
+        if args.is_empty() {
+          send_message(
+            ctx,
+            &guild_chan.read(),
+            MessageParams {
+              message: Some(String::from(
+                "usage: .s|.search <{youtube,yt}|{soundcloud,sc}> <query>",
+              )),
+              ..MessageParams::default()
+            },
+          )
+          .map_err(|e| CommandError(format!("Failed to send message: {:?}", e)))?;
+        } else {
+          let ctx_read = ctx.data.read();
+          let search_client = ctx_read
+            .get::<SearchClientKey>()
+            .ok_or_else(|| CommandError(String::from("Could not get Search HTTP Client")))?;
+          let search_site = match args.parse::<search::Site>() {
+            Ok(site) => {
+              args.advance();
+              site
+            }
+            Err(_) => search::Site::YouTube,
+          };
+          let query_result_str = match search_site {
+            search::Site::YouTube => {
+              // search youtube
+              let api_key = ctx_read
+                .get::<YouTubeApiKey>()
+                .ok_or_else(|| CommandError(String::from("Could not find Youtube API Key")))?;
+              let search_results =
+                search::youtube::search(&search_client, args.rest(), &api_key)
+                  .map_err(|e| CommandError(format!("Failed to search: {:?}", e)))?;
+              format_results(search_results.as_slice())
+            }
+            search::Site::SoundCloud => {
+              // search soundcloud
+              let client_id = ctx_read
+                .get::<SoundCloudApiKey>()
+                .ok_or_else(|| CommandError(String::from("Could not find SoundCloud API Key")))?;
+              let search_results =
+                search::soundcloud::search(&search_client, args.rest(), &client_id)
+                  .map_err(|e| CommandError(format!("Failed to search: {:?}", e)))?;
+              format_results(search_results.as_slice())
+            }
+          };
+          send_message(
+            ctx,
+            &guild_chan.read(),
+            MessageParams {
+              title: Some(format!("**{:?}** Results", search_site)),
+              message: Some(query_result_str),
+              ..MessageParams::default()
+            },
+          )
+          .map_err(|e| CommandError(format!("Failed to send message: {:?}", e)))?;
+        }
+      }
+      _ => {
+        if let Err(why) = msg.reply(&ctx, "Needs to be executed in a guild channel") {
+          log::error!("Failed to send message: {:?}", &why);
+        }
+      }
+    },
+    None => {}
+  }
+  Ok(())
+}
+
+fn format_results(search_results: &[crate::search::SearchResult]) -> String {
+  if search_results.is_empty() {
+    String::from("No results")
+  } else {
+    search_results
+      .iter()
+      .enumerate()
+      .fold(String::new(), |mut acc, (idx, result)| {
+        acc.push_str(&*format!(
+          "**{}**: [{}]({}) by **{}**\n",
+          idx + 1,
+          result.title,
+          result.url,
+          result.author
+        ));
+        acc
+      })
+  }
+}
 
 #[command]
 #[aliases("queue", "tracks", "q")]
@@ -715,25 +976,135 @@ fn list_queue(ctx: &mut Context, msg: &Message) -> CommandResult {
 
 #[command]
 #[aliases("play", "p")]
-fn enqueue(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
+fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+  use crate::search;
   let guild = msg
     .guild(&ctx.cache)
     .ok_or_else(|| CommandError(String::from("Only Guilds supported")))?;
   let guild = guild.read();
-  let queue = get_queue_for_guild(ctx, guild.id)?;
-  if let Some(arg) = args.current() {
-    let mut queue = queue
-      .write()
-      .map_err(|e| format!("Failed to acquire write lock for audio queue: {}", e))?;
-    queue.add_track(arg)?;
-    Ok(())
+
+  let queue_lock = get_queue_for_guild(ctx, guild.id)?;
+  let queue_read = queue_lock
+    .read()
+    .map_err(|e| format!("Failed to acquire write lock for audio queue: {}", e))?;
+  let isnt_connected_to_channel = queue_read.connected_channel.is_none();
+  drop(queue_read);
+  drop(queue_lock);
+  // to free up ctx ^
+  let ctx_read = ctx.data.read();
+  let soundcloud_client_id = ctx_read
+    .get::<SoundCloudApiKey>()
+    .ok_or_else(|| CommandError(String::from("Could not find SoundCloud API Key")))?
+    .clone();
+  let youtube_api_key = ctx_read
+    .get::<YouTubeApiKey>()
+    .ok_or_else(|| CommandError(String::from("Could not find Youtube API Key")))?
+    .clone();
+  let search_client = ctx_read
+    .get::<SearchClientKey>()
+    .ok_or_else(|| CommandError(String::from("Could not get Search HTTP Client")))?
+    .clone();
+  if isnt_connected_to_channel {
+    let voice_manager_lock = ctx_read
+      .get::<VoiceManager>()
+      .cloned()
+      .ok_or_else(|| CommandError(String::from("Could not find VoiceManager")))?;
+    let mut voice_manager = voice_manager_lock.lock();
+    let guild = msg
+      .guild(&ctx.cache)
+      .ok_or_else(|| CommandError(String::from("Only Guilds supported")))?;
+    let guild = guild.read();
+    let channel_id = guild
+      .voice_states
+      .get(&msg.author.id)
+      .and_then(|chan| chan.channel_id)
+      .ok_or_else(|| CommandError(String::from("You are not in a voice channel")))?;
+    if let Some(Channel::Guild(channel)) = msg.channel(&ctx.cache) {
+      // this match won't fail
+      match voice_manager.join(&guild.id, channel_id) {
+        Some(handler) => {
+          drop(ctx_read);
+          if let Ok(mut queue) = get_queue_for_guild(ctx, guild.id)?.write() {
+            let handler = Arc::new(Mutex::new(handler.clone()));
+            queue.connected_channel = Some(VoiceConnection { handler, channel });
+          }
+        }
+        None => {
+          return Err(CommandError(format!("Failed to join {}", channel_id)));
+        }
+      }
+    }
   } else {
-    Err(CommandError(String::from("No link provided")))
+    drop(ctx_read);
   }
+  // drop read ctx for queue write
+  log::info!("after we drop ctx_read");
+  // get queue lock back
+  let queue_lock = get_queue_for_guild(ctx, guild.id)?;
+  log::info!("got queue lock...");
+  let mut queue = queue_lock
+    .write()
+    .map_err(|e| format!("Failed to acquire write lock for audio queue: {}", e))?;
+  if let Ok(url) = args.parse::<url::Url>() {
+    queue.add_track(url)?;
+  } else {
+    log::info!("beginning search");
+    let search_site = match args.parse::<search::Site>() {
+      Ok(site) => {
+        args.advance();
+        site
+      }
+      Err(_) => search::Site::YouTube,
+    };
+    let result_idx = match args.parse::<usize>() {
+      Ok(idx) => idx,
+      Err(_) => {
+        args.advance();
+        1
+      }
+    };
+    log::info!("before search results");
+    let search_results = match search_site {
+      search::Site::YouTube => {
+        // search youtube
+        search::youtube::search(&search_client, args.rest(), &youtube_api_key)
+          .map_err(|e| CommandError(format!("Failed to search: {:?}", e)))?
+      }
+      search::Site::SoundCloud => {
+        // search soundcloud
+        search::soundcloud::search(&search_client, args.rest(), &soundcloud_client_id)
+          .map_err(|e| CommandError(format!("Failed to search: {:?}", e)))?
+      }
+    };
+    log::info!("results gotten");
+    if search_results.is_empty() {
+      if let Err(why) = msg.reply(&ctx, "No search results") {
+        log::error!(
+          "Failed to notify user that there were no search results: {}",
+          &why
+        );
+      }
+    } else {
+      let select_idx = if result_idx - 1 > search_results.len() {
+        0
+      } else {
+        result_idx - 1
+      };
+      let track = &search_results[select_idx];
+      log::info!("before adding track");
+      queue.add_track(url::Url::parse(&*track.url).map_err(|e| {
+        CommandError(format!(
+          "Failed to parse URL for search result {}: {}",
+          select_idx, e
+        ))
+      })?)?;
+    }
+  }
+  Ok(())
 }
 
 #[command]
-#[aliases("summon")]
+#[aliases("summon", "j")]
 fn join(ctx: &mut Context, msg: &Message) -> CommandResult {
   let voice_manager_lock = ctx
     .data
@@ -835,6 +1206,7 @@ fn skip(ctx: &mut Context, msg: &Message) -> CommandResult {
 // 1. Find voice manager for guild -> leave
 // 2. Find queue for guild -> set connected_channel to None
 #[command]
+#[aliases("l")]
 fn leave(ctx: &mut Context, msg: &Message) -> CommandResult {
   let guild = msg
     .guild(&ctx.cache)
@@ -865,6 +1237,11 @@ fn get_queue_for_guild(ctx: &Context, guild_id: GuildId) -> Result<ThreadSafeQue
     .clone();
   drop(read_ctx);
   let mut data_write = ctx.data.write();
+  let volume = data_write
+    .get::<VolumeMapKey>()
+    .map(|m| m.get(&guild_id.0))
+    .flatten()
+    .cloned();
   let mut queue_map = data_write
     .get_mut::<QueueKey>()
     .ok_or_else(|| CommandError(String::from("Could not find Queue map in Context")))?
@@ -876,8 +1253,14 @@ fn get_queue_for_guild(ctx: &Context, guild_id: GuildId) -> Result<ThreadSafeQue
     .get_current_user()
     .map_err(|e| CommandError(format!("Could not get Bot Id: {}", &e)))?
     .id;
-  let entry = queue_map
-    .entry(guild_id)
-    .or_insert_with(|| Queue::new(runtime, bot_id, ctx.cache.clone(), Arc::clone(&ctx.http)));
+  let entry = queue_map.entry(guild_id).or_insert_with(|| {
+    Queue::new(
+      runtime,
+      bot_id,
+      ctx.cache.clone(),
+      Arc::clone(&ctx.http),
+      volume,
+    )
+  });
   Ok(Arc::clone(&entry))
 }

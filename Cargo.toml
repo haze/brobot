@@ -5,7 +5,7 @@ authors = ["Haze Booth <isnt@haze.cool>"]
 edition = "2018"
 
 [dependencies]
-serenity = { version = "0.8.0", features = ["voice"] }
+serenity = { version = "0.8.4", features = ["voice"] }
 dotenv = "0.15.0"
 pretty_env_logger = "0.4.0"
 log = "0.4.8"
@@ -20,3 +20,4 @@ threadpool = "1.7.1"
 crossbeam = "0.7.3"
 ctrlc = "3.1.4"
 serde-aux = "0.6.1"
+pretty-bytes = "0.2.2"
