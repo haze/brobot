@@ -765,7 +765,7 @@ fn wipe_audio_cache(ctx: &mut Context, msg: &Message, args: Args) -> CommandResu
   match args.current() {
     Some("--dry") => {} // dry run
     _ => {
-      std::fs::remove_dir("saved_tracks/")
+      std::fs::remove_dir_all("saved_tracks/")
         .map_err(|e| CommandError(format!("Failed to remove cached track dir: {}", e)))?;
       std::fs::create_dir_all("saved_tracks/")
         .map_err(|e| CommandError(format!("Failed to create cached track dir: {}", e)))?;
