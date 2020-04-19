@@ -1,5 +1,5 @@
 [package]
-name = "kitt"
+name = "brobot"
 version = "0.1.0"
 authors = ["Haze Booth <isnt@haze.cool>"]
 edition = "2018"
@@ -14,7 +14,6 @@ serde = { version = "1.0.106", features = ["derive"] }
 serde_json = "1.0.51"
 chrono = { version = "0.4.11", features = ["serde"] }
 reqwest = "0.10.4"
-tempfile = "3.1.0"
 tokio = "0.2.17"
 threadpool = "1.7.1"
 crossbeam = "0.7.3"

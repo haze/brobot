@@ -333,9 +333,18 @@ fn is_youtube_dl_capable_host(host: &str) -> bool {
 fn youtube_dl_process_audio(track: ThreadSafeTrackStatus, queue_sender: QueueWorkerSender) {
   use std::process::Command;
   if let Some((source, url)) = track.get_info() {
-    match tempfile::NamedTempFile::new() {
-      Ok(temp_file) => {
-        log::info!("temp file made at: {:?}", temp_file.path());
+    let music_dir = std::path::Path::new("saved_tracks/");
+    if !music_dir.exists() {
+      if let Err(why) = std::fs::create_dir_all(&music_dir) {
+        log::error!("Failed to create saved tracks dir: {}", &why);
+        track.fail(Box::new(why));
+        return;
+      }
+    }
+    let file_path = music_dir.join(&source.id());
+    match std::fs::File::create(&file_path) {
+      Ok(new_file) => {
+        log::info!("temp file made at: {:?}", &file_path);
         track.set_state(TrackState::Downloading(source.clone()));
         log::info!("Now doanloading");
         let mut download_command = Command::new("youtube-dl");
@@ -345,8 +354,7 @@ fn youtube_dl_process_audio(track: ThreadSafeTrackStatus, queue_sender: QueueWor
           "--no-continue",
           &*url,
           "-o",
-          temp_file
-            .path()
+          file_path
             .to_str()
             .expect("Temporary file path is not valid unicode"),
         ];
@@ -359,23 +367,7 @@ fn youtube_dl_process_audio(track: ThreadSafeTrackStatus, queue_sender: QueueWor
           Ok(output) => {
             if output.status.success() {
               log::info!("FInished downloading...");
-              // persist to music dir
-              let music_dir = std::path::Path::new("saved_tracks/");
-              if !music_dir.exists() {
-                if let Err(why) = std::fs::create_dir_all(&music_dir) {
-                  log::error!("Failed to create saved tracks dir: {}", &why);
-                  track.fail(Box::new(why));
-                  return;
-                }
-              }
-              let final_location = music_dir.join(source.id());
-              if let Err(why) = temp_file.persist(&final_location) {
-                log::error!("Failed to persist temp file to saved tracks dir: {}", &why);
-                track.fail(Box::new(why));
-                return;
-              }
-              log::info!("Track persisted to {:?}", &final_location);
-              track.ready(final_location);
+              track.ready(file_path);
               if let Err(why) = queue_sender.send(QueueWorkerEvent::SongFinishedDownloading) {
                 log::error!("Failed to send SongFinishedDownloading event: {}", &why);
               }
