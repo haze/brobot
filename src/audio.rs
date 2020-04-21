@@ -447,12 +447,12 @@ impl Queue {
     self.tracks.retain(|t| {
       if let Ok(t_guard) = t.state.read() {
         if let TrackState::Failed { .. } = *t_guard {
-          return true;
+          return false;
         }
       } else {
-        return true;
+        return false;
       }
-      false
+      true
     })
   }
 
