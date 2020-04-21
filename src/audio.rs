@@ -170,10 +170,12 @@ struct LastQueueMessage {
 
 // 1. if there is nothing playing, and a song just finished downloading, try to begin playing
 // 2. if a song finished playing, try to play the next song
+// 3. comb queue of failed tracks before!
 fn queue_worker_task(queue: Arc<RwLock<Queue>>, receiver: QueueWorkerReceiver) {
   fn next_song(q: &Arc<RwLock<Queue>>) {
     match q.write() {
       Ok(mut queue) => {
+        queue.clear_failed_tracks();
         if let Err(why) = queue.next_song() {
           log::error!("Can't play next song: {:?}", &why);
         }
@@ -439,6 +441,19 @@ impl Queue {
   /// Clears the queue
   fn clear(&mut self) {
     self.tracks.clear();
+  }
+
+  fn clear_failed_tracks(&mut self) {
+    self.tracks.retain(|t| {
+      if let Ok(t_guard) = t.state.read() {
+        if let TrackState::Failed { .. } = *t_guard {
+          return true;
+        }
+      } else {
+        return true;
+      }
+      false
+    })
   }
 
   fn state_update(&self) {
@@ -755,7 +770,8 @@ impl TrackState {
   stop,
   search,
   volume,
-  wipe_audio_cache
+  wipe_audio_cache,
+  clear
 )]
 struct Audio;
 
