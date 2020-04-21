@@ -119,6 +119,7 @@ pub mod youtube {
     query: &str,
     api_key: &str,
   ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+    log::info!("Searching youtube with query: {}", query);
     let url_encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
     let req = http_client.get(&*format!(
       "https://www.googleapis.com/youtube/v3/search?order=relevance&q={}&type=video&key={}&part=snippet",

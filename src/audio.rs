@@ -177,9 +177,7 @@ fn queue_worker_task(queue: Arc<RwLock<Queue>>, receiver: QueueWorkerReceiver) {
         if let Err(why) = queue.next_song() {
           log::error!("Can't play next song: {:?}", &why);
         }
-        if let Err(why) = queue.worker_sender.send(QueueWorkerEvent::StateUpdate) {
-          log::error!("Failed to send queue State Update event: {}", &why);
-        }
+        queue.state_update();
       }
       Err(why) => {
         log::error!("Failed to acquire write lock for queue: {}", &why);
@@ -438,6 +436,21 @@ impl std::fmt::Display for Queue {
 }
 
 impl Queue {
+  /// Clears the queue
+  fn clear(&mut self) {
+    self.tracks.clear();
+  }
+
+  fn state_update(&self) {
+    self.send_worker_event(QueueWorkerEvent::StateUpdate);
+  }
+
+  fn send_worker_event(&self, event: QueueWorkerEvent) {
+    if let Err(why) = self.worker_sender.send(event) {
+      log::error!("Failed to send worker event: {:?}, {}", event, why);
+    }
+  }
+
   fn set_volume(&mut self, new_volume: f32) {
     self.volume = new_volume;
     if let Some(ref now_playing) = self.currently_playing {
@@ -1052,6 +1065,7 @@ fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
     .map_err(|e| format!("Failed to acquire write lock for audio queue: {}", e))?;
   if let Ok(url) = args.parse::<url::Url>() {
     queue.add_track(url)?;
+    queue.state_update();
   } else {
     log::info!("beginning search");
     let search_site = match args.parse::<search::Site>() {
@@ -1062,11 +1076,11 @@ fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
       Err(_) => search::Site::YouTube,
     };
     let result_idx = match args.parse::<usize>() {
-      Ok(idx) => idx,
-      Err(_) => {
+      Ok(idx) => {
         args.advance();
-        1
+        idx
       }
+      Err(_) => 1,
     };
     log::info!("before search results");
     let search_results = match search_site {
@@ -1109,6 +1123,20 @@ fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 }
 
 #[command]
+fn clear(ctx: &mut Context, msg: &Message) -> CommandResult {
+  let guild = msg
+    .guild(&ctx.cache)
+    .ok_or_else(|| CommandError(String::from("Only Guilds supported")))?;
+  let guild = guild.read();
+  let guild_id = guild.id;
+  let queue = get_queue_for_guild(ctx, guild_id)?;
+  if let Ok(mut queue_write_guard) = queue.write() {
+    queue_write_guard.clear();
+  }
+  Ok(())
+}
+
+#[command]
 #[aliases("summon", "j")]
 fn join(ctx: &mut Context, msg: &Message) -> CommandResult {
   let voice_manager_lock = ctx
@@ -1138,9 +1166,7 @@ fn join(ctx: &mut Context, msg: &Message) -> CommandResult {
             if let Err(why) = queue.next_song() {
               log::error!("Failed to increment song queue: {:?}", &why);
             }
-            if let Err(why) = queue.worker_sender.send(QueueWorkerEvent::StateUpdate) {
-              log::error!("Failed to send state update: {}", &why);
-            }
+            queue.state_update();
           }
         }
       }
@@ -1202,9 +1228,7 @@ fn skip(ctx: &mut Context, msg: &Message) -> CommandResult {
     .write()
     .map_err(|e| CommandError(format!("Failed to get queue write lock: {}", &e)))?;
   queue.next_song()?;
-  if let Err(why) = queue.worker_sender.send(QueueWorkerEvent::StateUpdate) {
-    log::error!("Failed to send queue state update: {}", &why);
-  }
+  queue.state_update();
   Ok(())
 }
 
