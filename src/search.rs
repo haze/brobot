@@ -163,71 +163,71 @@ pub mod soundcloud {
   #[serde(rename_all = "camelCase")]
   pub struct Collection {
     #[serde(rename = "comment_count")]
-    pub comment_count: i64,
+    pub comment_count: Option<i64>,
     #[serde(rename = "full_duration")]
-    pub full_duration: i64,
-    pub downloadable: bool,
+    pub full_duration: Option<i64>,
+    pub downloadable: Option<bool>,
     #[serde(rename = "created_at")]
     pub created_at: String,
-    pub description: String,
-    pub media: Media,
-    pub title: String,
+    pub description: Option<String>,
+    pub media: Option<Media>,
+    pub title: Option<String>,
     #[serde(rename = "publisher_metadata")]
-    pub publisher_metadata: PublisherMetadata,
-    pub duration: i64,
+    pub publisher_metadata: Option<PublisherMetadata>,
+    pub duration: Option<i64>,
     #[serde(rename = "has_downloads_left")]
-    pub has_downloads_left: bool,
+    pub has_downloads_left: Option<bool>,
     #[serde(rename = "artwork_url")]
     pub artwork_url: Option<String>,
-    pub public: bool,
-    pub streamable: bool,
+    pub public: Option<bool>,
+    pub streamable: Option<bool>,
     #[serde(rename = "tag_list")]
-    pub tag_list: String,
-    pub genre: String,
+    pub tag_list: Option<String>,
+    pub genre: Option<String>,
     pub id: i64,
     #[serde(rename = "reposts_count")]
-    pub reposts_count: i64,
-    pub state: String,
+    pub reposts_count: Option<i64>,
+    pub state: Option<String>,
     #[serde(rename = "label_name")]
-    pub label_name: ::serde_json::Value,
+    pub label_name: Option<::serde_json::Value>,
     #[serde(rename = "last_modified")]
     pub last_modified: String,
-    pub commentable: bool,
-    pub policy: String,
-    pub visuals: ::serde_json::Value,
-    pub kind: String,
+    pub commentable: Option<bool>,
+    pub policy: Option<String>,
+    pub visuals: Option<::serde_json::Value>,
+    pub kind: Option<String>,
     #[serde(rename = "purchase_url")]
     pub purchase_url: Option<String>,
-    pub sharing: String,
+    pub sharing: Option<String>,
     pub uri: String,
     #[serde(rename = "secret_token")]
-    pub secret_token: ::serde_json::Value,
+    pub secret_token: Option<::serde_json::Value>,
     #[serde(rename = "download_count")]
-    pub download_count: i64,
+    pub download_count: Option<i64>,
     #[serde(rename = "likes_count")]
-    pub likes_count: i64,
+    pub likes_count: Option<i64>,
     pub urn: String,
-    pub license: String,
+    pub license: Option<String>,
     #[serde(rename = "purchase_title")]
     pub purchase_title: Option<String>,
     #[serde(rename = "display_date")]
-    pub display_date: String,
+    pub display_date: Option<String>,
     #[serde(rename = "embeddable_by")]
-    pub embeddable_by: String,
+    pub embeddable_by: Option<String>,
     #[serde(rename = "release_date")]
-    pub release_date: ::serde_json::Value,
+    pub release_date: Option<::serde_json::Value>,
     #[serde(rename = "user_id")]
-    pub user_id: i64,
+    pub user_id: Option<i64>,
     #[serde(rename = "monetization_model")]
-    pub monetization_model: String,
+    pub monetization_model: Option<String>,
     #[serde(rename = "waveform_url")]
-    pub waveform_url: String,
+    pub waveform_url: Option<String>,
     pub permalink: String,
     #[serde(rename = "permalink_url")]
     pub permalink_url: String,
-    pub user: User,
+    pub user: Option<User>,
     #[serde(rename = "playback_count")]
-    pub playback_count: i64,
+    pub playback_count: Option<i64>,
   }
 
   #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -241,7 +241,7 @@ pub mod soundcloud {
   pub struct Transcoding {
     pub url: String,
     pub preset: String,
-    pub duration: i64,
+    pub duration: Option<i64>,
     pub snipped: bool,
     pub format: Format,
     pub quality: String,
@@ -363,7 +363,7 @@ pub mod soundcloud {
     pub urn: String,
     pub enabled: bool,
     pub visuals: Vec<Visual>,
-    pub tracking: ::serde_json::Value,
+    pub tracking: Option<::serde_json::Value>,
   }
 
   #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -379,8 +379,11 @@ pub mod soundcloud {
   impl From<Collection> for SearchResult {
     fn from(collection: Collection) -> SearchResult {
       SearchResult {
-        title: collection.title,
-        author: collection.user.username,
+        title: collection.title.unwrap_or(collection.uri),
+        author: collection
+          .user
+          .map(|u| u.username)
+          .unwrap_or_else(|| String::from("Unknown User")),
         url: collection.permalink_url,
       }
     }
