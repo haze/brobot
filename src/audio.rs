@@ -771,7 +771,8 @@ impl TrackState {
   search,
   volume,
   wipe_audio_cache,
-  clear
+  clear,
+  remove
 )]
 struct Audio;
 
@@ -1133,6 +1134,7 @@ fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
           select_idx, e
         ))
       })?)?;
+      queue.state_update();
     }
   }
   Ok(())
@@ -1148,6 +1150,26 @@ fn clear(ctx: &mut Context, msg: &Message) -> CommandResult {
   let queue = get_queue_for_guild(ctx, guild_id)?;
   if let Ok(mut queue_write_guard) = queue.write() {
     queue_write_guard.clear();
+  }
+  Ok(())
+}
+
+#[command]
+fn remove(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+  let guild = msg
+    .guild(&ctx.cache)
+    .ok_or_else(|| CommandError(String::from("Only Guilds supported")))?;
+  let guild = guild.read();
+  let guild_id = guild.id;
+  let queue = get_queue_for_guild(ctx, guild_id)?;
+  let remove_idx = args.single::<usize>().map_err(|e| {
+    CommandError(format!(
+      "Invalid index provided ({}). Usage: .remove <idx>",
+      e
+    ))
+  })?;
+  if let Ok(mut queue_write_guard) = queue.write() {
+    queue_write_guard.tracks.remove(remove_idx);
   }
   Ok(())
 }
