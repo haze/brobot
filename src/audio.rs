@@ -849,12 +849,12 @@ fn volume(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
     Ok(new_volume) => {
       queue_write.set_volume(new_volume / 100_f32);
       format!(
-        "Volume changed from **{}** to **{}**",
+        "Volume changed from **{:.0}** to **{:.0}**",
         &current_volume * 100_f32,
         &new_volume,
       )
     }
-    Err(_) => format!("Volume is currently **{}**", &current_volume * 100_f32),
+    Err(_) => format!("Volume is currently **{:.0}**", &current_volume * 100_f32),
   };
   match msg.channel(&ctx) {
     Some(Channel::Guild(guild_chan)) => {
