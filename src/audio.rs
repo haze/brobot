@@ -1019,7 +1019,8 @@ fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   let guild = guild.read();
 
   if let Ok(first_arg) = args.parse::<String>() {
-    if &*(first_arg.to_lowercase()) == "--help" {
+    let lower = first_arg.to_lowercase();
+    if &*lower == "--help" || &*lower == "-h" {
       if let Ok(Channel::Guild(guild_chan)) = msg.channel_id.to_channel(&ctx.http) {
         return send_message(
           ctx,
