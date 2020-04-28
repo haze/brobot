@@ -1198,18 +1198,20 @@ fn remove(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
       actual_remove_idx,
       queue_write_guard.tracks.len()
     );
-    if actual_remove_idx > queue_write_guard.tracks.len() {
-      msg.reply(
-        &ctx,
-        format!(
-          "Invalid index, should be between 1 and {}",
-          queue_write_guard.tracks.len()
-        ),
-      )?;
-    } else {
-      queue_write_guard.tracks.remove(remove_idx - 1);
-      queue_write_guard.state_update();
-      log::info!("Successfully removed track @ idx {}", remove_idx);
+    if !queue_write_guard.tracks.is_empty() {
+      if actual_remove_idx < queue_write_guard.tracks.len() {
+        queue_write_guard.tracks.remove(actual_remove_idx);
+        queue_write_guard.state_update();
+        log::info!("Successfully removed track @ idx {}", remove_idx);
+      } else {
+        msg.reply(
+          &ctx,
+          format!(
+            "Invalid index, should be between 1 and {}",
+            queue_write_guard.tracks.len()
+          ),
+        )?;
+      }
     }
   }
   Ok(())
