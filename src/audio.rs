@@ -1018,6 +1018,28 @@ fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
     .ok_or_else(|| CommandError(String::from("Only Guilds supported")))?;
   let guild = guild.read();
 
+  if let Ok(first_arg) = args.parse::<String>() {
+    if &*(first_arg.to_lowercase()) == "--help" {
+      if let Ok(Channel::Guild(guild_chan)) = msg.channel_id.to_channel(&ctx.http) {
+        return send_message(
+          ctx,
+          &guild_chan.read(),
+          MessageParams {
+            message: Some(String::from(
+              ".play <sc|yt (default)> <index (default is 1)> <query>",
+            )),
+            ..MessageParams::default()
+          },
+        )
+        .map(|_| ())
+        .map_err(|e| CommandError(format!("Failed to send message: {:?}", e)));
+      } else {
+        msg.reply(&ctx, "Play only works in guild channels")?;
+        return Ok(());
+      }
+    }
+  }
+
   let queue_lock = get_queue_for_guild(ctx, guild.id)?;
   let queue_read = queue_lock
     .read()
@@ -1114,7 +1136,7 @@ fn enqueue(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
     };
     log::info!("results gotten");
     if search_results.is_empty() {
-      if let Err(why) = msg.reply(&ctx, "No search results") {
+      if let Err(why) = msg.reply(&ctx, "No search results found") {
         log::error!(
           "Failed to notify user that there were no search results: {}",
           &why
@@ -1169,7 +1191,25 @@ fn remove(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
     ))
   })?;
   if let Ok(mut queue_write_guard) = queue.write() {
-    queue_write_guard.tracks.remove(remove_idx);
+    let actual_remove_idx = remove_idx - 1;
+    log::info!(
+      "a={}, l={}",
+      actual_remove_idx,
+      queue_write_guard.tracks.len()
+    );
+    if actual_remove_idx > queue_write_guard.tracks.len() {
+      msg.reply(
+        &ctx,
+        format!(
+          "Invalid index, should be between 1 and {}",
+          queue_write_guard.tracks.len()
+        ),
+      )?;
+    } else {
+      queue_write_guard.tracks.remove(remove_idx - 1);
+      queue_write_guard.state_update();
+      log::info!("Successfully removed track @ idx {}", remove_idx);
+    }
   }
   Ok(())
 }
