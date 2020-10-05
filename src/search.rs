@@ -114,8 +114,8 @@ pub mod youtube {
     }
   }
 
-  pub fn search(
-    http_client: &reqwest::blocking::Client,
+  pub async fn search(
+    http_client: &reqwest::Client,
     query: &str,
     api_key: &str,
   ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
@@ -127,8 +127,10 @@ pub mod youtube {
     ));
     let results = req
       .send()
+      .await
       .map_err(|e| Box::new(e))?
       .json::<QueryRoot>()
+      .await
       .map(|root| {
         let items = root.items.len();
         root
@@ -389,8 +391,8 @@ pub mod soundcloud {
     }
   }
 
-  pub fn search(
-    http_client: &reqwest::blocking::Client,
+  pub async fn search(
+    http_client: &reqwest::Client,
     query: &str,
     client_id: &str,
   ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
@@ -401,8 +403,10 @@ pub mod soundcloud {
     ));
     let results = req
       .send()
+      .await
       .map_err(|e| Box::new(e))?
       .json::<QueryRoot>()
+      .await
       .map(|root| {
         let items = root.collection.len();
         root

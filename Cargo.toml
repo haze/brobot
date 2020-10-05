@@ -1,11 +1,11 @@
 [package]
 name = "brobot"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Haze Booth <isnt@haze.cool>"]
 edition = "2018"
 
 [dependencies]
-serenity = { git = "https://github.com/Lakelezz/serenity", branch = "fix-gateway-current", features = ["voice"] }
+serenity = { git = "https://github.com/serenity-rs/serenity", branch = "current", features = ["voice"] }
 dotenv = "0.15.0"
 pretty_env_logger = "0.4.0"
 log = "0.4.8"
@@ -13,9 +13,8 @@ url = "2.1.1"
 serde = { version = "1.0.106", features = ["derive"] }
 serde_json = "1.0.51"
 chrono = { version = "0.4.11", features = ["serde"] }
-reqwest = "0.10.4"
-tokio = "0.2.17"
-threadpool = "1.7.1"
+reqwest = { version = "0.10.4", features = ["blocking"] }
+tokio = { version = "0.2.17", features = ["rt-threaded"] }
 crossbeam = "0.7.3"
 ctrlc = "3.1.4"
 serde-aux = "0.6.1"

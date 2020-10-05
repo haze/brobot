@@ -59,19 +59,21 @@ pub fn simple_message_edit(builder: &mut EditMessage, params: MessageParams, per
     unimplemented!()
   }
 }
-pub fn send_message(
+
+pub async fn send_message(
   ctx: &Context,
   channel: &model::channel::GuildChannel,
   params: MessageParams,
 ) -> Result<Message, SerenityError> {
-  let bot_id = ctx.http.get_current_user()?.id;
-  let perms = channel.permissions_for_user(&ctx.cache, bot_id)?;
+  let bot_id = ctx.http.get_current_user().await?.id;
+  let perms = channel.permissions_for_user(&ctx.cache, bot_id).await?;
 
   channel
     .send_message(&ctx.http, |m| {
       simple_message(m, params, perms);
       m
     })
+    .await
     .map_err(|e| {
       log::error!("Failed to send message: {:?}", &e);
       e
